@@ -11,5 +11,6 @@ websockets
 # SLAM (optional; needs Python 3.8–3.12 for open3d wheels)
 # open3d
 
-# Face recognition (optional; can be tricky on Apple Silicon)
-# pip install face_recognition
+# Face recognition (dlib CNN — works great on NVIDIA GPU)
+face_recognition
+setuptools<81  # face_recognition_models needs pkg_resources

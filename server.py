@@ -74,10 +74,7 @@ if pyaudio is None:
     print("Warning: PyAudio/PortAudio not available; local audio I/O disabled (robot audio still works).", file=sys.stderr)
 
 from ultralytics import YOLO
-try:
-    import face_recognition
-except (ImportError, OSError):
-    face_recognition = None  # e.g. dlib wrong arch on Apple Silicon
+from face_engine import FaceEngine
 
 from google import genai
 from google.genai import types
@@ -215,8 +212,9 @@ FACE_CACHE_FILE = os.path.join(FACE_CACHE_DIR, 'known_faces.json')
 
 
 class FaceCache:
-    def __init__(self, tolerance=0.6):
+    def __init__(self, tolerance=0.6, face_engine=None):
         self.tolerance = tolerance
+        self.face_engine = face_engine
         self.entries = []
         self._lock = threading.Lock()
         os.makedirs(FACE_CACHE_DIR, exist_ok=True)
@@ -228,7 +226,21 @@ class FaceCache:
         try:
             with open(FACE_CACHE_FILE) as f:
                 data = json.load(f)
-            for entry in data:
+
+            if isinstance(data, dict):
+                cached_backend = data.get('backend')
+                entries = data.get('entries', [])
+            else:
+                cached_backend = 'dlib'
+                entries = data
+
+            engine_backend = self.face_engine.backend if self.face_engine else None
+            if cached_backend != engine_backend:
+                print(f"Face cache: backend changed ({cached_backend} -> {engine_backend}), clearing cache")
+                self._persist()
+                return
+
+            for entry in entries:
                 self.entries.append({
                     'name': entry['name'],
                     'encoding': np.array(entry['encoding'], dtype=np.float64),
@@ -240,23 +252,26 @@ class FaceCache:
 
     def _persist(self):
         try:
-            data = [
-                {'name': e['name'], 'encoding': e['encoding'].tolist(), 'saved_at': e['saved_at']}
-                for e in self.entries
-            ]
+            data = {
+                'backend': self.face_engine.backend if self.face_engine else None,
+                'entries': [
+                    {'name': e['name'], 'encoding': e['encoding'].tolist(), 'saved_at': e['saved_at']}
+                    for e in self.entries
+                ],
+            }
             with open(FACE_CACHE_FILE, 'w') as f:
                 json.dump(data, f)
         except Exception as e:
             print(f"Warning: failed to save face cache: {e}")
 
     def recognize(self, encoding):
-        if face_recognition is None:
+        if self.face_engine is None:
             return None
         with self._lock:
             if not self.entries:
                 return None
             known = [e['encoding'] for e in self.entries]
-            distances = face_recognition.face_distance(known, encoding)
+            distances = self.face_engine.face_distance(known, encoding)
             best_idx = int(np.argmin(distances))
             if distances[best_idx] <= self.tolerance:
                 return self.entries[best_idx]['name']
@@ -294,12 +309,13 @@ class FrameProcessor:
     """Receives frames from robot WebSocket, runs YOLO + face recognition."""
 
     def __init__(self, model_path='yolov8n.pt', confidence=0.5,
-                 face_cache=None, enable_faces=True):
+                 face_cache=None, enable_faces=True, face_engine=None):
         print(f'Loading YOLO model: {model_path}')
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.enable_faces = enable_faces
         self.face_cache = face_cache
+        self.face_engine = face_engine
 
         self._unknown_faces = {}
         self._next_unknown_id = 1
@@ -448,16 +464,14 @@ class FrameProcessor:
             self.latest_detections = detections
 
     def _run_face_recognition(self, frame):
-        if face_recognition is None:
+        if self.face_engine is None:
             return []
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locs = face_recognition.face_locations(rgb, model='cnn')
-        if not face_locs:
+        detections = self.face_engine.detect_and_encode(rgb)
+        if not detections:
             return []
-        face_encs = face_recognition.face_encodings(rgb, face_locs, model='small')
         results = []
-        for loc, enc in zip(face_locs, face_encs):
-            top, right, bottom, left = loc
+        for top, right, bottom, left, enc in detections:
             name = self.face_cache.recognize(enc) if self.face_cache else None
             unknown_id = None
             if name is None:
@@ -470,11 +484,11 @@ class FrameProcessor:
         return results
 
     def _get_or_assign_unknown_id(self, encoding):
-        if face_recognition is None:
+        if self.face_engine is None:
             return 0
         best_dist, best_id = 999.0, None
         for uid, enc in self._unknown_faces.items():
-            dist = float(face_recognition.face_distance([enc], encoding)[0])
+            dist = float(self.face_engine.face_distance([enc], encoding)[0])
             if dist < best_dist:
                 best_dist, best_id = dist, uid
         if best_id is not None and best_dist < 0.5:
@@ -2429,16 +2443,22 @@ async def run_server(args):
     os.environ.pop('GOOGLE_API_KEY', None)
     os.environ.pop('GEMINI_API_KEY', None)
 
-    face_cache = None
-    if not args.no_faces and face_recognition is not None:
-        face_cache = FaceCache(tolerance=args.face_tolerance)
+    face_engine = None
+    if not args.no_faces:
+        try:
+            face_engine = FaceEngine()
+        except RuntimeError as e:
+            print(f"Note: {e}\nRunning without face recognition.")
 
-    enable_faces = (not args.no_faces) and (face_recognition is not None)
-    if not enable_faces and face_recognition is None:
-        print("Note: face_recognition/dlib not available; running without face recognition.")
+    face_cache = None
+    if face_engine is not None:
+        face_cache = FaceCache(tolerance=args.face_tolerance, face_engine=face_engine)
+
+    enable_faces = face_engine is not None
     frame_processor = FrameProcessor(
         model_path=args.model, confidence=args.confidence,
         face_cache=face_cache, enable_faces=enable_faces,
+        face_engine=face_engine,
     )
     _frame_processor_ref = frame_processor
 
