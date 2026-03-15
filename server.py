@@ -29,14 +29,49 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import numpy as np
 import cv2
-# Prefer compat on macOS to avoid "Could not import the PyAudio C module" and dylib issues
+
+
+class _NullStream:
+    """No-op audio stream when no device is available (e.g. headless VM)."""
+    def read(self, num_frames, exception_on_overflow=False):
+        return b'\x00' * (num_frames * 2)  # int16 = 2 bytes per sample
+    def write(self, data):
+        pass
+    def stop_stream(self):
+        pass
+    def close(self):
+        pass
+
+
+# Prefer compat on macOS to avoid "Could not import the PyAudio C module" and dylib issues.
+# On headless VMs (no PortAudio), use null audio so server still runs; audio goes to robot only.
+pyaudio = None
 if sys.platform == 'darwin':
-    import pyaudio_compat as pyaudio
-else:
+    try:
+        import pyaudio_compat as pyaudio
+    except (ImportError, OSError):
+        pass
+if pyaudio is None:
     try:
         import pyaudio
     except ImportError:
-        import pyaudio_compat as pyaudio
+        try:
+            import pyaudio_compat as pyaudio
+        except (ImportError, OSError):
+            pass
+if pyaudio is None:
+    # No PortAudio/PyAudio: dummy module so AUDIO_FORMAT and PyAudio() exist; streams are no-ops.
+    class _NullPyAudio:
+        paInt16 = 8
+        def open(self, **kwargs):
+            return _NullStream()  # module-level class above
+        def terminate(self):
+            pass
+    class _NullPyaudioModule:
+        PyAudio = _NullPyAudio
+        paInt16 = 8
+    pyaudio = _NullPyaudioModule()
+    print("Warning: PyAudio/PortAudio not available; local audio I/O disabled (robot audio still works).", file=sys.stderr)
 
 from ultralytics import YOLO
 try:
@@ -2251,7 +2286,10 @@ async def gemini_send_local_audio(session, pya, mic_device=None, mic_gain=1.0):
     )
     if mic_device is not None:
         kwargs['input_device_index'] = mic_device
-    stream = pya.open(**kwargs)
+    try:
+        stream = pya.open(**kwargs)
+    except OSError:
+        stream = _NullStream()  # no input device; will send silence
     apply_gain = mic_gain > 1.01
     loop = asyncio.get_event_loop()
     try:
@@ -2304,10 +2342,13 @@ async def _slam_update_loop(frame_processor, slam_ref, interval=0.35):
 
 async def gemini_receive(session, pya, cmd_dispatcher, robot_ws_ref, robot_name):
     """Receive Gemini responses: play audio locally + send to robot, parse commands."""
-    stream = pya.open(
-        format=AUDIO_FORMAT, channels=AUDIO_CHANNELS, rate=RECV_SAMPLE_RATE,
-        output=True, frames_per_buffer=AUDIO_CHUNK,
-    )
+    try:
+        stream = pya.open(
+            format=AUDIO_FORMAT, channels=AUDIO_CHANNELS, rate=RECV_SAMPLE_RATE,
+            output=True, frames_per_buffer=AUDIO_CHUNK,
+        )
+    except OSError:
+        stream = _NullStream()  # no output device (e.g. headless VM); audio still sent to robot
     loop = asyncio.get_event_loop()
     try:
         while True:
