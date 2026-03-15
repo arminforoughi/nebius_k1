@@ -1,0 +1,15 @@
+# Server (run on your laptop/desktop)
+numpy
+opencv-python
+ultralytics
+google-genai
+websockets
+
+# Audio (optional; may need system portaudio)
+# pip install pyaudio   # or use pyaudio_compat in repo if it fails
+
+# SLAM (optional; needs Python 3.8–3.12 for open3d wheels)
+# open3d
+
+# Face recognition (optional; can be tricky on Apple Silicon)
+# pip install face_recognition
