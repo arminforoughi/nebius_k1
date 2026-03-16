@@ -1373,14 +1373,17 @@ HTML_PAGE = """<!DOCTYPE html>
   #left-slam .slam-status { font-size:11px; color:#666; margin-bottom:4px; }
   #left-slam img { width:100%; max-height:260px; object-fit:contain; background:#1a1a1a; border-radius:4px; display:block; }
   #left-slam .btn-row { margin-top:6px; gap:6px; }
-  #right { width:380px; flex-shrink:0; display:flex; flex-direction:column; border-left:1px solid #333; min-height:0; transition:margin-right 0.25s ease, opacity 0.2s ease; }
-  #right.collapsed { display:none; }
-  #panel-toggle { position:fixed; top:8px; right:8px; z-index:999; width:32px; height:32px; border-radius:6px; border:1px solid #444; background:#222; color:#ccc; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; }
-  #panel-toggle:hover { background:#333; color:#fff; }
+  #right { width:380px; flex-shrink:0; display:flex; flex-direction:column; border-left:1px solid #333; min-height:0; }
   #header { padding:12px 16px; border-bottom:1px solid #333; font-size:14px; color:#888; }
   #header span { color:#4CAF50; font-weight:bold; }
   #controls { padding:8px 16px; border-bottom:1px solid #333; }
-  #controls h3 { font-size:12px; color:#888; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+  #controls.collapsed { display:none; }
+  #controls h3 { font-size:12px; color:#888; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; display:flex; justify-content:space-between; align-items:center; }
+  #controls h3 .close-ctrl { background:none; border:none; color:#666; cursor:pointer; font-size:16px; padding:0 4px; line-height:1; }
+  #controls h3 .close-ctrl:hover { color:#f44336; }
+  #open-controls { padding:4px 16px; border-bottom:1px solid #333; display:none; }
+  #open-controls button { background:none; border:1px solid #444; color:#888; cursor:pointer; font-size:11px; padding:3px 10px; border-radius:4px; text-transform:uppercase; letter-spacing:1px; }
+  #open-controls button:hover { color:#4CAF50; border-color:#4CAF50; }
   .btn-row { display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
   .ctrl-btn { padding:6px 12px; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; transition:transform 0.1s; }
   .ctrl-btn:hover { transform:scale(1.05); }
@@ -1425,7 +1428,6 @@ HTML_PAGE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <button id="panel-toggle" title="Close controls panel" onclick="togglePanel()">&times;</button>
   <div id="left">
     <div id="camera-wrap"><img id="feed" src="/frame" alt="Camera"></div>
     <div id="left-slam">
@@ -1444,8 +1446,9 @@ HTML_PAGE = """<!DOCTYPE html>
   <div id="right">
     <div id="header"><span>Gemini Robot Control</span> &mdash; Remote Mode</div>
     <div id="robot-status"><span id="conn-dot" class="disconnected">&#9679;</span> <span id="conn-text">Robot: connecting...</span></div>
+    <div id="open-controls"><button onclick="toggleControls()">Show Robot Controls</button></div>
     <div id="controls">
-      <h3>Robot Controls</h3>
+      <h3>Robot Controls <button class="close-ctrl" onclick="toggleControls()" title="Close controls">&times;</button></h3>
       <div class="btn-row">
         <button class="ctrl-btn btn-follow" onclick="cmd('follow')">Follow Me</button>
         <button class="ctrl-btn btn-follow" onclick="cmd('track')">Track Person</button>
@@ -1522,12 +1525,11 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="status"><span class="dot"></span>Listening... | <a href="/3d" target="_blank" style="color:#4CAF50;">3D View</a> | <a href="/slam/map" target="_blank" style="color:#4CAF50;">SLAM Map</a></div>
   </div>
 <script>
-  function togglePanel() {
-    const panel = document.getElementById('right');
-    const btn = document.getElementById('panel-toggle');
-    panel.classList.toggle('collapsed');
-    btn.innerHTML = panel.classList.contains('collapsed') ? '&#9776;' : '&times;';
-    btn.title = panel.classList.contains('collapsed') ? 'Open controls panel' : 'Close controls panel';
+  function toggleControls() {
+    const ctrl = document.getElementById('controls');
+    const opener = document.getElementById('open-controls');
+    const hidden = ctrl.classList.toggle('collapsed');
+    opener.style.display = hidden ? 'block' : 'none';
   }
 
   const img = document.getElementById('feed');
